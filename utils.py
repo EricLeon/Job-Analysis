@@ -1,212 +1,190 @@
-from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-import time
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
+from time import sleep
+import math, random, datetime
 
 
-def get_jobs(keyword, num_jobs, verbose):
-    
+def get_text(text):
     """
+    Requests text attribute of Beautifulsoup response and strips unnecessary space.
 
     Parameters
     ----------
+    text : Beautifulsoup Attribute
+        Beautifulsoup attribute to be cleaned.
 
-    
     Returns
     ------
-
+    clean_text : str
+        Data point from HTML source.
     """
 
-    # Set up the URL(s) to scrape
-    url = 'https://www.glassdoor.com/Job/jobs.htm?sc.keyword="' + keyword + '"&locT=C&locId=1147401&locKeyword=San%20Francisco,%20CA&jobType=all&fromAge=-1&minSalary=0&includeNoSalaryJobs=true&radius=100&cityId=-1&minRating=0.0&industryId=-1&sgocId=-1&seniorityType=all&companyId=-1&employerSizes=0&applicationType=0&remoteWorkType=0'
+    clean_text = text.text.strip()
+    return clean_text
 
-    # Create instance of Chrome driver and request URL
-    options = Options()
-    options.add_argument('start-maximized')
-    #options.add_argument('headless')
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.get(url)
+
+def clean_salary(salary):
+    """
+    Requests text attribute of Beautifulsoup response, strips spaces and replaces characters.
+
+    Parameters
+    ----------
+    salary : Beautifulsoup Attribute
+        Beautifulsoup attribute to be cleaned.
+
+    Returns
+    ------
+    clean_salary : str
+        Data point from HTML source.
+    """
+
+    clean_salary = salary.text.strip().replace('£','').replace(',','')
+    return clean_salary
+
+
+def clean_search_term(search_term):
+    """
+    Transforms users search term into format used in URL.
+
+    Parameters
+    ----------
+    search_term : str
+        Job title the user wants to search for.
+
+    Returns
+    ------
+    search_term : str
+        Formatted search term to be used in the URL requests.
+    """
+
+    search_term = search_term.replace(' ','-')
+    return search_term.lower()
+
+
+def export_to_csv(file_name, source_data):
+    """
+    Exports scraped data to CSV file avoiding encoding issues.
+
+    Parameters
+    ----------
+    file_name : str
+        Desired name of the output CSV file.
+
+    source_data : dataframe
+        The scraped data stored during scraping.
+
+    Returns
+    ------
+    """
+
+    with open(f"{file_name}.csv", 'a', encoding='utf8', errors='replace') as file:
+        source_data.to_csv(file, index=False)
+
+
+def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_data'):
+    """
+    Scrapes data from Reed job advert website.
+
+    Parameters
+    ----------
+    job_title : str
+        Term to search Reed job advert website for.
+
+    uk_city : str -> default
+        The city to search for jobs (Reed only operates in UK cities).
+        default -> london
+
+    start_page : int
+        The page number on which to start the search.
+        default -> 1
+
+    file_name : str
+        The desired file name for the output CSV file with the scraped data.
+        default -> scraped_data.csv
+
+    Returns
+    ------
+    df : dataframe
+        Dataframe with the scraped data. A CSV file is also created in same directory using file_name.
+    """
     
-    # Initialise Dataframe to hold jobs
-    jobs = []
-
+    # Initialise variables
+    title_list, link_list, posted_by_list, salary_list = ([] for i in range(4))
+    location_list, job_type_list, description_list = ([] for i in range(3))
+    today = datetime.date.today().strftime("%d %B %Y")
+    current_page = start_page
+    jobs_scraped = 0
+    job_title = clean_search_term(job_title)
+    base_url = f'https://www.reed.co.uk/jobs/{job_title}-jobs-in-{uk_city}?'
     
-    # Scrape jobs
-    while len(jobs) < num_jobs:  #If true, should be still looking for new jobs.
+    # Request first page of results
+    response = requests.get(base_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Find number of pages by dividing # jobs vy jobs/page (25)
+    num_pages = math.ceil(
+    int(
+        soup.find('div',attrs={'class':'page-counter'}).text.strip().split('of ')[1].split(' ')[0].replace(',','')
+        )
+    /25)
+    print(f'{num_pages} page(s) found to scrape...')
+    print('-'*10)
+    
+    # Scrape each listing on every page
+    while current_page <= num_pages:
 
-        # TODO: Check what this does?
-        time.sleep(4)
+        # Request page and find all job postings on current page
+        response = requests.get(f'{base_url}?pageno={current_page}')
+        sleep(random.randint(1,3))
+        soup = BeautifulSoup(response.text, 'html.parser')
+        all_postings = soup.find_all('article', attrs={'class':'job-result-card'})
+    
+        # Scrape each posting
+        for job in all_postings:
+            job_title = get_text(job.find(attrs={'class':'job-result-heading__title'}))
+            direct_link = 'https://www.reed.co.uk'+job.find(attrs={'class':'job-result-heading__title'}).find('a')['href']
+            posted_by = get_text(job.find(attrs={'class':'job-result-heading__posted-by'}).find('a'))
+            salary = clean_salary(job.find(attrs={'class':'job-metadata__item job-metadata__item--salary'}))
+            location = get_text(job.find(attrs={'class':'job-metadata__item job-metadata__item--location'}).find('span'))
+            job_type = get_text(job.find(attrs={'class':'job-metadata__item job-metadata__item--type'}))
 
-        #Test for the "Sign Up" prompts and get rid of them.
-        # try:
-        #     driver.find_element(by=By.CLASS_NAME, value="selected").click()
-        #     time.sleep(3)
-        # except ElementClickInterceptedException:
-        #     pass
+            # Get the description from the job posting
+            direct_posting = requests.get(direct_link)
+            listing_soup = BeautifulSoup(direct_posting.text, 'html.parser')
+            description = get_text(listing_soup.find('span', attrs={'itemprop':'description'}))
 
-        # try:
-        #     driver.find_element(by=By.CLASS_NAME, value="ModalStyle__xBtn___29PT9").click() 
-        #     time.sleep(3)
-        # except NoSuchElementException:
-        #     pass
+            # Append scraped data to respective list
+            title_list.append(job_title)
+            link_list.append(direct_link)
+            posted_by_list.append(posted_by)
+            salary_list.append(salary)
+            location_list.append(location)
+            job_type_list.append(job_type)
+            description_list.append(description)
+            sleep(.2)
+        print(f'Page {current_page} scraped successfully')
+        current_page += 1
+        
+    # Create Dataframe
+    data_dict = {'job_title':title_list, 'posted_by':posted_by_list, 'salary':salary_list, 'location':location_list,
+             'job_type':job_type_list, 'direct_link':link_list, 'job_description':description_list}
+    df = pd.DataFrame(data_dict)
+    df['scrape_date'] = today
+
+
+    # Export data to CSV
+    export_to_csv(file_name=file_name, source_data=df)
+    return df
 
         
-        # Find all the job listing "buttons" (postings)
-        # job_buttons = driver.find_elements(by=By.CLASS_NAME, value="react-job-listing")
-        # job_buttons = driver.find_elements(by=By.XPATH, value='//*[@id="MainCol"]/div[1]/ul/li[1]')
-        all_jobs = driver.find_element(by = By.XPATH, value = '//*[@id="MainCol"]/div[1]/ul')
-        job_buttons = all_jobs.find_elements(by=By.CLASS_NAME, value="react-job-listing")
-
-        
-        # Navigate to each posting and scrape data
-        for job_button in job_buttons:  
-
-            print("Progress: {}".format("" + str(len(jobs)) + "/" + str(num_jobs)))
-            if len(jobs) >= num_jobs:
-                break
-
-            job_button.click()
-            time.sleep(3)
-            collected_successfully = False
-
-            try:
-                driver.find_element(by=By.XPATH, value='//*[@id="JAModal"]/div/div[2]/span').click()
-                time.sleep(3)
-            except NoSuchElementException:
-            	pass
-            
-            
-            while not collected_successfully:
-                try:
-                    company_name = driver.find_element(by=By.XPATH, value='//*[@id="JDCol"]/div/article/div/div[1]/div/div/div[1]/div[3]/div[1]/div[1]').text
-                    print(company_name)
-                    # location = driver.find_element_by_xpath('.//div[@class="location"]').text
-                    # job_title = driver.find_element_by_xpath('.//div[contains(@class, "title")]').text
-                    # job_description = driver.find_element_by_xpath('.//div[@class="jobDescriptionContent desc"]').text
-                    collected_successfully = True
-                except:
-                    time.sleep(5)
-
-    #         try:
-    #             salary_estimate = driver.find_element_by_xpath('.//span[@class="gray small salary"]').text
-    #         except NoSuchElementException:
-    #             salary_estimate = -1 #You need to set a "not found value. It's important."
-            
-    #         try:
-    #             rating = driver.find_element_by_xpath('.//span[@class="rating"]').text
-    #         except NoSuchElementException:
-    #             rating = -1 #You need to set a "not found value. It's important."
-
-    #         #Printing for debugging
-    #         if verbose:
-    #             print("Job Title: {}".format(job_title))
-    #             print("Salary Estimate: {}".format(salary_estimate))
-    #             print("Job Description: {}".format(job_description[:500]))
-    #             print("Rating: {}".format(rating))
-    #             print("Company Name: {}".format(company_name))
-    #             print("Location: {}".format(location))
-
-    #         #Going to the Company tab...
-    #         #clicking on this:
-    #         #<div class="tab" data-tab-type="overview"><span>Company</span></div>
-    #         try:
-    #             driver.find_element_by_xpath('.//div[@class="tab" and @data-tab-type="overview"]').click()
-
-    #             try:
-    #                 #<div class="infoEntity">
-    #                 #    <label>Headquarters</label>
-    #                 #    <span class="value">San Francisco, CA</span>
-    #                 #</div>
-    #                 headquarters = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Headquarters"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 headquarters = -1
-
-    #             try:
-    #                 size = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Size"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 size = -1
-
-    #             try:
-    #                 founded = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Founded"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 founded = -1
-
-    #             try:
-    #                 type_of_ownership = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Type"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 type_of_ownership = -1
-
-    #             try:
-    #                 industry = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Industry"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 industry = -1
-
-    #             try:
-    #                 sector = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Sector"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 sector = -1
-
-    #             try:
-    #                 revenue = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Revenue"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 revenue = -1
-
-    #             try:
-    #                 competitors = driver.find_element_by_xpath('.//div[@class="infoEntity"]//label[text()="Competitors"]//following-sibling::*').text
-    #             except NoSuchElementException:
-    #                 competitors = -1
-
-    #         except NoSuchElementException:  #Rarely, some job postings do not have the "Company" tab.
-    #             headquarters = -1
-    #             size = -1
-    #             founded = -1
-    #             type_of_ownership = -1
-    #             industry = -1
-    #             sector = -1
-    #             revenue = -1
-    #             competitors = -1
-
-                
-    #         if verbose:
-    #             print("Headquarters: {}".format(headquarters))
-    #             print("Size: {}".format(size))
-    #             print("Founded: {}".format(founded))
-    #             print("Type of Ownership: {}".format(type_of_ownership))
-    #             print("Industry: {}".format(industry))
-    #             print("Sector: {}".format(sector))
-    #             print("Revenue: {}".format(revenue))
-    #             print("Competitors: {}".format(competitors))
-    #             print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-
-    #         jobs.append({"Job Title" : job_title,
-    #         "Salary Estimate" : salary_estimate,
-    #         "Job Description" : job_description,
-    #         "Rating" : rating,
-    #         "Company Name" : company_name,
-    #         "Location" : location,
-    #         "Headquarters" : headquarters,
-    #         "Size" : size,
-    #         "Founded" : founded,
-    #         "Type of ownership" : type_of_ownership,
-    #         "Industry" : industry,
-    #         "Sector" : sector,
-    #         "Revenue" : revenue,
-    #         "Competitors" : competitors})
-    #         #add job to jobs
-
-    #     #Clicking on the "next page" button
-    #     try:
-    #         driver.find_element_by_xpath('.//li[@class="next"]//a').click()
-    #     except NoSuchElementException:
-    #         print("Scraping terminated before reaching target number of jobs. Needed {}, got {}.".format(num_jobs, len(jobs)))
-    #         break
-
-    # return pd.DataFrame(jobs)  #This line converts the dictionary object into a pandas DataFrame.
 
 
-df = get_jobs("data scientist", 5, False)
-print(df)
+
+
+
+
+
+
+
+
