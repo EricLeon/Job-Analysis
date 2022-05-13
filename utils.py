@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from time import sleep
-import math, random, datetime
+import math, random, datetime, sqlite3
 
 
 def get_text(text):
@@ -61,28 +61,7 @@ def clean_search_term(search_term):
     search_term = search_term.replace(' ','-')
     return search_term.lower()
 
-
-def export_to_csv(file_name, source_data):
-    """
-    Exports scraped data to CSV file avoiding encoding issues.
-
-    Parameters
-    ----------
-    file_name : str
-        Desired name of the output CSV file.
-
-    source_data : dataframe
-        The scraped data stored during scraping.
-
-    Returns
-    ------
-    """
-
-    with open(f"{file_name}.csv", 'a', encoding='utf8', errors='replace') as file:
-        source_data.to_csv(file, index=False)
-
-
-def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_data'):
+def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, database_path='reed_jobs.db'):
     """
     Scrapes data from Reed job advert website.
 
@@ -91,7 +70,7 @@ def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_da
     job_title : str
         Term to search Reed job advert website for.
 
-    uk_city : str -> default
+    uk_city : str
         The city to search for jobs (Reed only operates in UK cities).
         default -> london
 
@@ -99,16 +78,18 @@ def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_da
         The page number on which to start the search.
         default -> 1
 
-    file_name : str
-        The desired file name for the output CSV file with the scraped data.
-        default -> scraped_data.csv
+    export_to_csv : bool
+        Whether or not to export the output to a CSV file in current directory
+
+    database_path : str
+        The database name in which to store the scraped data.
 
     Returns
     ------
     df : dataframe
         Dataframe with the scraped data. A CSV file is also created in same directory using file_name.
     """
-    
+
     # Initialise variables
     title_list, link_list, posted_by_list, salary_list = ([] for i in range(4))
     location_list, job_type_list, description_list = ([] for i in range(3))
@@ -116,7 +97,26 @@ def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_da
     current_page = start_page
     jobs_scraped = 0
     job_title = clean_search_term(job_title)
+    uk_city = uk_city.lower()
     base_url = f'https://www.reed.co.uk/jobs/{job_title}-jobs-in-{uk_city}?'
+
+    # Create SQL connection
+    con = sqlite3.connect(database_path)
+    cur = con.cursor()
+
+    # Get list of UK cities from database
+    uk_cities = get_uk_cities(conn=con, cursor=cur)
+    
+    # Check if searching for a valid Job Title
+    if len(job_title) < 1:
+        job_title = input('Please enter a job title to search for: ')
+
+    while True:
+        if uk_city not in uk_cities:
+            uk_city = input('Please enter a valid City within the United Kingdom: ').lower()
+        else:
+            break
+
     
     # Request first page of results
     response = requests.get(base_url)
@@ -174,11 +174,51 @@ def scrape_reed(job_title, uk_city='london', start_page=1, file_name='scraped_da
 
 
     # Export data to CSV
-    export_to_csv(file_name=file_name, source_data=df)
+    if export_to_csv:
+        with open(f"{job_title}_jobs_{uk_city}.csv", 'a', encoding='utf8', errors='replace') as file:
+            df.to_csv(file, index=False)
+    
     return df
 
-        
+def get_uk_cities(conn, cursor):
+    """
+    Scrapes UK cities and adds to database on first run. Queries them on subsequent.
 
+    Parameters
+    ----------
+    conn : str
+        Database connection object
+
+    cursor : str
+        Database cursor object to execute queries.
+
+    Returns
+    ------
+    uk_cities : list
+        List of all distinct cities within UK.
+    """
+
+    print('Checking if UK_CITIES table exists in the database:')
+    listOfTables = cursor.execute("""SELECT * FROM sqlite_master WHERE name ='uk_cities' and type='table';""").fetchall()
+    if listOfTables == []:
+        # Scrape all City names in the UK
+        print('Creating a database of all cities in the UK.')
+        country_json = requests.get('https://shivammathur.com/countrycity/cities/United%20Kingdom').json()
+        uk_city_df = pd.DataFrame(country_json, columns=['city'])
+        uk_city_df['country'] = 'united kingdom'
+        uk_city_df['city'] = uk_city_df['city'].str.lower()
+        uk_city_df.to_sql('uk_cities', conn, if_exists='append', index=False, dtype={
+        'country':'text','city':'text'})
+        uk_cities = uk_city_df['city'].tolist()
+    
+    else:
+        # Set row factory and reset cursor to return single item list
+        conn.row_factory = lambda cursor, row: row[0]
+        cursor = conn.cursor()
+        uk_cities = cursor.execute('SELECT city FROM uk_cities').fetchall()
+        print('UK Cities already scraped... moving on to jobs.')
+
+    return uk_cities
 
 
 

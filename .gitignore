@@ -2,3 +2,4 @@ env_jobs/
 .DS_Store
 __pycache__/
 *.csv
+reed_jobs.db
