@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from time import sleep
-import math, random, datetime, sqlite3
+import math, random, datetime, sqlite3, sys
 
 
 def get_text(text):
@@ -109,10 +109,12 @@ def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, d
     
     # Check if searching for a valid Job Title
     if len(job_title) < 1:
+        print('-'*10)
         job_title = input('Please enter a job title to search for: ')
 
     while True:
         if uk_city not in uk_cities:
+            print('-'*10)
             uk_city = input('Please enter a valid City within the United Kingdom: ').lower()
         else:
             break
@@ -122,14 +124,20 @@ def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, d
     response = requests.get(base_url)
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # Find number of pages by dividing # jobs vy jobs/page (25)
-    num_pages = math.ceil(
-    int(
+    # Check if there are any jobs returned
+    try:
+        # Find number of pages by dividing # jobs vy jobs/page (25)
+        num_pages = math.ceil(
+        int(
         soup.find('div',attrs={'class':'page-counter'}).text.strip().split('of ')[1].split(' ')[0].replace(',','')
         )
-    /25)
-    print(f'{num_pages} page(s) found to scrape...')
-    print('-'*10)
+        /25)
+        print(f'{num_pages} page(s) found to scrape...')
+        print('-'*10)
+
+    except:
+        print('There are no jobs to scrape.')
+        sys.exit(1)
     
     # Scrape each listing on every page
     while current_page <= num_pages:
@@ -199,10 +207,12 @@ def get_uk_cities(conn, cursor):
     """
 
     print('Checking if UK_CITIES table exists in the database:')
+    print('-'*10)
     listOfTables = cursor.execute("""SELECT * FROM sqlite_master WHERE name ='uk_cities' and type='table';""").fetchall()
     if listOfTables == []:
         # Scrape all City names in the UK
         print('Creating a database of all cities in the UK.')
+        print('-'*10)
         country_json = requests.get('https://shivammathur.com/countrycity/cities/United%20Kingdom').json()
         uk_city_df = pd.DataFrame(country_json, columns=['city'])
         uk_city_df['country'] = 'united kingdom'
@@ -217,6 +227,7 @@ def get_uk_cities(conn, cursor):
         cursor = conn.cursor()
         uk_cities = cursor.execute('SELECT city FROM uk_cities').fetchall()
         print('UK Cities already scraped... moving on to jobs.')
+        print('-'*10)
 
     return uk_cities
 
