@@ -150,7 +150,7 @@ def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, d
     
         # Scrape each posting
         for job in all_postings:
-            job_title = get_text(job.find(attrs={'class':'job-result-heading__title'}))
+            title = get_text(job.find(attrs={'class':'job-result-heading__title'}))
             direct_link = 'https://www.reed.co.uk'+job.find(attrs={'class':'job-result-heading__title'}).find('a')['href']
             posted_by = get_text(job.find(attrs={'class':'job-result-heading__posted-by'}).find('a'))
             salary = clean_salary(job.find(attrs={'class':'job-metadata__item job-metadata__item--salary'}))
@@ -163,7 +163,7 @@ def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, d
             description = get_text(listing_soup.find('span', attrs={'itemprop':'description'}))
 
             # Append scraped data to respective list
-            title_list.append(job_title)
+            title_list.append(title)
             link_list.append(direct_link)
             posted_by_list.append(posted_by)
             salary_list.append(salary)
@@ -185,6 +185,8 @@ def scrape_reed(job_title, uk_city='london', start_page=1, export_to_csv=True, d
     if export_to_csv:
         with open(f"{job_title}_jobs_{uk_city}.csv", 'a', encoding='utf8', errors='replace') as file:
             df.to_csv(file, index=False)
+
+    populate_jobs_database(conn=con, cursor=cur, data=df)
     
     return df
 
@@ -231,8 +233,30 @@ def get_uk_cities(conn, cursor):
 
     return uk_cities
 
+def populate_jobs_database(conn, cursor, data):
+    """
+    Uses the scraped data to populate a local SQLite database.
 
+    Parameters
+    ----------
+    conn : str
+        Database connection object
 
+    cursor : str
+        Database cursor object to execute queries.
+
+    data : dataframe
+        Dataframe of the scraped jobs to populate the database with.
+
+    Returns
+    ------
+    """
+
+    print('Storing scraped jobs in JOBS table.')
+    data.to_sql('jobs', conn, if_exists='append', index=False, dtype={
+        'job_title':'text', 'posted_by':'text',  'salary':'text',  'location':'text',
+        'job_type':'text', 'direct_link':'text', 'job_description':'text', 'scrape_date':'text'})
+    
 
 
 
